@@ -3,6 +3,13 @@ import sqlite3      # Библиотека для работы с SQLite баз�
 import json        # Библиотека для работы с JSON форматом
 from datetime import datetime  # Библиотека для работы с датой и временем
 import threading   # Библиотека для обеспечения потокобезопасности
+import hashlib     # Библиотека для хэширования данных
+import secrets     # Библиотека для генерации безопасных случайных чисел
+from cryptography.fernet import Fernet  # Для симметричного шифрования
+import base64      # Для кодирования ключа шифрования
+
+# Фиксированный ключ для шифрования API ключа (для локального хранения)
+_ENCRYPTION_KEY = Fernet(b'MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=')
 
 class ChatCache:
     """
@@ -13,6 +20,7 @@ class ChatCache:
     - Сохранение метаданных (модель, токены, время)
     - Форматированный вывод истории
     - Очистку истории
+    - Хранение аутентификационных данных (ключ, PIN)
     """
     
     def __init__(self):
@@ -87,6 +95,16 @@ class ChatCache:
                 message_length INTEGER,
                 response_time FLOAT,
                 tokens_used INTEGER
+            )
+        ''')
+
+        # Создание таблицы для хранения аутентификационных данных
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS auth_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                encrypted_api_key TEXT NOT NULL,  -- Зашифрованный API ключ
+                pin TEXT NOT NULL,                -- PIN-код (хэшированный)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -173,6 +191,108 @@ class ChatCache:
         ''')
         return cursor.fetchall()
 
+    def save_auth_data(self, api_key, pin):
+        """
+        Сохранение аутентификационных данных (API ключ и PIN).
+
+        Args:
+            api_key (str): API ключ OpenRouter
+            pin (str): 4-значный PIN-код
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Шифрование API ключа
+        encrypted_key = _ENCRYPTION_KEY.encrypt(api_key.encode()).decode()
+
+        # Хэширование PIN
+        hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
+
+        # Очистка старых данных перед сохранением новых
+        cursor.execute('DELETE FROM auth_data')
+
+        # Сохранение новых данных
+        cursor.execute('''
+            INSERT INTO auth_data (encrypted_api_key, pin)
+            VALUES (?, ?)
+        ''', (encrypted_key, hashed_pin))
+        conn.commit()
+
+    def get_auth_data(self):
+        """
+        Получение сохраненных аутентификационных данных.
+
+        Returns:
+            dict: Словарь с ключами 'api_key' и 'pin', или None если данных нет
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT encrypted_api_key, pin FROM auth_data ORDER BY id DESC LIMIT 1')
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                # Расшифровка API ключа
+                api_key = _ENCRYPTION_KEY.decrypt(row[0].encode()).decode()
+                return {
+                    'api_key': api_key,
+                    'pin': row[1]
+                }
+            except Exception:
+                # Если не удалось расшифровать, возвращаем None
+                return None
+        return None
+
+    def verify_pin(self, entered_pin):
+        """
+        Проверка введенного PIN-кода.
+        
+        Args:
+            entered_pin (str): Введенный пользователем PIN
+            
+        Returns:
+            bool: True если PIN корректен, False в противном случае
+        """
+        auth_data = self.get_auth_data()
+        if not auth_data:
+            return False
+        
+        hashed_pin = hashlib.sha256(entered_pin.encode()).hexdigest()
+        return hashed_pin == auth_data['pin']
+
+    def clear_auth_data(self):
+        """
+        Очистка всех аутентификационных данных.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM auth_data')
+        conn.commit()
+
+    def generate_pin(self, api_key=None):
+        """
+        Генерация 4-значного PIN-кода.
+
+        Args:
+            api_key (str, optional): API ключ для детерминированной генерации PIN
+
+        Returns:
+            str: 4-значный PIN-код
+        """
+        if api_key is None:
+            # Рандомная генерация для обратной совместимости
+            return ''.join(secrets.choice('0123456789') for _ in range(4))
+        else:
+            # Детерминированная генерация на основе API ключа
+            hash_obj = hashlib.sha256((api_key + 'unique_salt_for_pin').encode()).hexdigest()
+            # Берем 4 цифры из хэша
+            digits = ''.join(c for c in hash_obj if c.isdigit())
+            if len(digits) < 4:
+                digits += '123456789'  # запасные цифры если мало
+            return digits[:4]
+
     def __del__(self):
         """
         Деструктор класса.
@@ -234,7 +354,7 @@ class ChatCache:
                 "id": row[0],              # ID сообщения
                 "model": row[1],           # Использованная модель
                 "user_message": row[2],    # Сообщение пользователя
-                "ai_response": row[3],     # Ответ AI
+                "ai_response": row[3],     # Временная метка
                 "timestamp": row[4],       # Временная метка
                 "tokens_used": row[5]      # Использовано токенов
             })

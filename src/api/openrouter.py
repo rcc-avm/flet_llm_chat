@@ -10,37 +10,40 @@ load_dotenv()
 class OpenRouterClient:
     """
     Клиент для взаимодействия с OpenRouter API.
-    
+
     OpenRouter - это сервис, предоставляющий унифицированный доступ к различным
     языковым моделям (GPT, Claude и др.) через единый API интерфейс.
     """
-    
-    def __init__(self):
+
+    def __init__(self, api_key=None):
         """
         Инициализация клиента OpenRouter.
-        
+
         Настраивает:
         - Систему логирования
-        - API ключ и базовый URL из переменных окружения
+        - API ключ и базовый URL из переменных окружения или параметра
         - Заголовки для HTTP запросов
         - Список доступных моделей
-        
+
+        Args:
+            api_key (str, optional): API ключ. Если не указан, берется из переменных окружения
+
         Raises:
-            ValueError: Если API ключ не найден в переменных окружения
+            ValueError: Если API ключ не найден в переменных окружения и не передан как параметр
         """
         # Инициализация логгера для отслеживания работы клиента
         self.logger = AppLogger()
-        
-        # Получение необходимых параметров из переменных окружения
-        self.api_key = os.getenv("OPENROUTER_API_KEY")  # API ключ для авторизации
+
+        # Получение API ключа из параметра или переменных окружения
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.base_url = os.getenv("BASE_URL")          # Базовый URL API
-        
+
         # Проверка наличия API ключа
         if not self.api_key:
             # Логирование критической ошибки
-            self.logger.error("OpenRouter API key not found in .env")
+            self.logger.error("OpenRouter API key not found in .env or not provided")
             # Выбрасывание исключения с понятным сообщением
-            raise ValueError("OpenRouter API key not found in .env")
+            raise ValueError("OpenRouter API key not found. Please provide it in .env or as parameter")
 
         # Настройка заголовков для всех API запросов
         self.headers = {
@@ -50,7 +53,7 @@ class OpenRouterClient:
 
         # Логирование успешной инициализации клиента
         self.logger.info("OpenRouterClient initialized successfully")
-        
+
         # Загрузка списка доступных моделей при инициализации
         self.available_models = self.get_models()
 

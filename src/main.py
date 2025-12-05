@@ -1,8 +1,12 @@
 # Импорт необходимых библиотек и модулей
+import sys                                         # Модуль для работы с системными функциями
+import os                                          # Библиотека для работы с операционной системой
+sys.path.insert(0, os.path.dirname(__file__))      # Добавление директории src в путь для импортов
+
 import flet as ft                                  # Фреймворк для создания кроссплатформенных приложений с современным UI
 from api.openrouter import OpenRouterClient        # Клиент для взаимодействия с AI API через OpenRouter
 from ui.styles import AppStyles                    # Модуль с настройками стилей интерфейса
-from ui.components import MessageBubble, ModelSelector  # Компоненты пользовательского интерфейса
+from ui.components import MessageBubble, ModelSelector, LoginWindow  # Компоненты пользовательского интерфейса
 from utils.cache import ChatCache                  # Модуль для кэширования истории чата
 from utils.logger import AppLogger                 # Модуль для логирования работы приложения
 from utils.analytics import Analytics              # Модуль для сбора и анализа статистики использования
@@ -11,7 +15,6 @@ import asyncio                                     # Библиотека для
 import time                                        # Библиотека для работы с временными метками
 import json                                        # Библиотека для работы с JSON-данными
 from datetime import datetime                      # Класс для работы с датой и временем
-import os                                          # Библиотека для работы с операционной системой
 
 class ChatApp:
     """
@@ -21,18 +24,39 @@ class ChatApp:
     def __init__(self):
         """
         Инициализация основных компонентов приложения:
-        - API клиент для связи с языковой моделью
-        - Система кэширования для сохранения истории
+        - Система кэширования для сохранения истории и аутентификационных данных
         - Система логирования для отслеживания работы
         - Система аналитики для сбора статистики
         - Система мониторинга для отслеживания производительности
+        - API клиент инициализируется после аутентификации
         """
         # Инициализация основных компонентов
-        self.api_client = OpenRouterClient()       # Создание клиента для работы с AI API
         self.cache = ChatCache()                   # Инициализация системы кэширования
         self.logger = AppLogger()                  # Инициализация системы логирования
-        self.analytics = Analytics(self.cache)     # Инициализация системы аналитики с передачей кэша
         self.monitor = PerformanceMonitor()        # Инициализация системы мониторинга
+
+        # API клиент и аналитика инициализируются после аутентификации
+        self.api_client = None
+        self.analytics = None
+
+        # Создание компонента для отображения баланса API (инициализируется после аутентификации)
+        self.balance_text = None
+
+        # Создание директории для экспорта истории чата
+        self.exports_dir = "exports"               # Путь к директории экспорта
+        os.makedirs(self.exports_dir, exist_ok=True)  # Создание директории, если её нет
+
+    def initialize_after_auth(self):
+        """
+        Инициализация компонентов, требующих API ключа после успешной аутентификации.
+        """
+        auth_data = self.cache.get_auth_data()
+        if not auth_data:
+            raise ValueError("Нет аутентификационных данных")
+
+        # Инициализация API клиента с сохраненным ключом
+        self.api_client = OpenRouterClient(api_key=auth_data['api_key'])
+        self.analytics = Analytics(self.cache)     # Инициализация системы аналитики
 
         # Создание компонента для отображения баланса API
         self.balance_text = ft.Text(
@@ -41,10 +65,6 @@ class ChatApp:
         )
         self.update_balance()                      # Первичное обновление баланса
 
-        # Создание директории для экспорта истории чата
-        self.exports_dir = "exports"               # Путь к директории экспорта
-        os.makedirs(self.exports_dir, exist_ok=True)  # Создание директории, если её нет
-        
     def load_chat_history(self):
         """
         Загрузка истории чата из кэша и отображение её в интерфейсе.
@@ -86,13 +106,9 @@ class ChatApp:
             self.balance_text.color = ft.Colors.RED_400     # Установка красного цвета для ошибки
             self.logger.error(f"Ошибка обновления баланса: {e}")
             
-    def main(self, page: ft.Page):
+    def show_main_ui(self, page: ft.Page):
         """
-        Основная функция инициализации интерфейса приложения.
-        Создает все элементы UI и настраивает их взаимодействие.
-        
-        Args:
-            page (ft.Page): Объект страницы Flet для размещения элементов интерфейса
+        Отображение основного интерфейса приложения после успешной аутентификации.
         """
         # Применение базовых настроек страницы из конфигурации стилей
         for key, value in AppStyles.PAGE_SETTINGS.items():
@@ -431,10 +447,56 @@ class ChatApp:
         # Логирование запуска
         self.logger.info("Приложение запущено")
 
+    def show_login_window(self, page: ft.Page):
+        """
+        Отображение окна входа в систему.
+        """
+        # Создание окна входа
+        login_window = LoginWindow(self.cache, OpenRouterClient)
+
+        # Установка страницы для окна входа
+        login_window.page = page
+
+        # Показ диалога
+        page.overlay.append(login_window)
+        login_window.open = True
+        page.update()
+
+        # Настройка обработчика успешного входа
+        original_close = login_window.close_after_delay
+
+        async def handle_login_success(delay_seconds):
+            # Ждем указанное время (показ сообщений пользователю)
+            await asyncio.sleep(delay_seconds)
+
+            # Инициализация после аутентификации
+            self.initialize_after_auth()
+
+            # Скрытие окна входа
+            login_window.open = False
+            if login_window in page.overlay:
+                page.overlay.remove(login_window)
+
+            # Показ основного интерфейса
+            self.show_main_ui(page)
+
+        # Переопределение метода закрытия
+        login_window.close_after_delay = handle_login_success
+
+    def main(self, page: ft.Page):
+        """
+        Основная функция инициализации интерфейса приложения.
+        Всегда показывает окно аутентификации перед основным интерфейсом.
+        """
+        self.show_login_window(page)
+
 def main():
     """Точка входа в приложение"""
     app = ChatApp()                              # Создание экземпляра приложения
-    ft.app(target=app.main)                      # Запуск приложения
+    # Запуск приложения
+    ft.app(target=app.main, view=ft.AppView.WEB_BROWSER)
+    #ft.app(target=app.main)
+
 
 if __name__ == "__main__":
     main()                                       # Запуск если файл запущен напрямую
