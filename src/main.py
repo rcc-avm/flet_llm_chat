@@ -494,8 +494,8 @@ def main():
     """Точка входа в приложение"""
     app = ChatApp()                              # Создание экземпляра приложения
     # Запуск приложения
-    ft.app(target=app.main, view=ft.AppView.WEB_BROWSER)
-    #ft.app(target=app.main)
+    #ft.app(target=app.main, view=ft.AppView.WEB_BROWSER)
+    ft.app(target=app.main)
 
 
 if __name__ == "__main__":
