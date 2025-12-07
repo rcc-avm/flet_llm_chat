@@ -160,7 +160,7 @@ class LoginWindow(ft.AlertDialog):
 
         # Инициализация родительского класса AlertDialog
         super().__init__(
-            modal=True,                    # Модальный диалог (блокирует остальной интерфейс)
+            modal=False,                   # Немодальный диалог для лучшей совместимости
             title=ft.Text("Вход в систему"),  # Заголовок диалогового окна
             content=self.content_column,   # Основное содержимое
             actions=self.get_actions(),    # Кнопки действий
@@ -375,8 +375,8 @@ class LoginWindow(ft.AlertDialog):
         self.info_text.value = "Вход выполнен успешно!"
         self.info_text.color = ft.colors.GREEN_400
 
-        # Закрытие окна через 1 секунду
-        self.page.run_task(self.close_after_delay, 1)
+        # Немедленное закрытие окна через механизм close_after_delay с 0 задержкой
+        self.page.run_task(self.close_after_delay, 0)
 
     def validate_api_key(self, api_key):
         """
@@ -409,3 +409,269 @@ class LoginWindow(ft.AlertDialog):
         self.open = False
         if self.page:
             self.page.update()
+
+
+class LoginContainer(ft.Container):
+    """
+    Контейнер аутентификации (входа в систему) в виде обычного компонента UI.
+
+    Регулярный контейнер без модального поведения для лучшей совместимости между
+    desktop и browser режимами Flet.
+
+    Args:
+        cache (ChatCache): Экземпляр класса кэширования для хранения данных аутентификации
+        api_client_class: Класс клиента API для валидации ключа
+    """
+
+    def __init__(self, cache, api_client_class):
+        # Сохранение ссылок на кэш и класс API клиента
+        self.cache = cache
+        self.api_client_class = api_client_class
+
+        # Флаги состояния
+        self.auth_data_exists = bool(self.cache.get_auth_data())  # Проверяем, есть ли сохраненные данные
+        self.is_first_login = not self.auth_data_exists
+        self.reset_mode = False  # Режим сброса ключа
+        self.pin_generated = False  # Флаг, что PIN был сгенерирован и показан
+
+        # Колбэк для успешного входа
+        self.on_success = None
+
+        # Создание элементов интерфейса
+        self.create_ui_elements()
+
+        # Инициализация Контейнера
+        super().__init__(
+            content=ft.Column(
+                controls=self.get_content_controls(),
+                spacing=15,
+                alignment=ft.MainAxisAlignment.START
+            ),
+            padding=20,
+            width=400,
+            height=300
+        )
+
+    def create_ui_elements(self):
+        """
+        Создание элементов пользовательского интерфейса контейнера.
+        """
+        # Текстовое поле для отображения информации и ошибок
+        self.info_text = ft.Text("", color=ft.colors.BLUE_400, size=14)
+
+        # Поле ввода API ключа для первого входа или сброса
+        self.api_key_field = ft.TextField(
+            label="Введите ключ API OpenRouter.ai",
+            hint_text="sk-or-v1-xxxxxxxxxxxx",
+            password=True,  # Скрытый ввод (точки вместо символов)
+            width=350,
+            max_length=100,
+        )
+
+        # Поле ввода PIN-кода для повторных входов
+        self.pin_field = ft.TextField(
+            label="Введите ваш PIN-код",
+            hint_text="4 цифры",
+            password=True,  # Скрытый ввод
+            width=350,
+            max_length=4,
+            input_filter=ft.NumbersOnlyInputFilter(),  # Только цифры
+        )
+
+        # Поле отображения сгенерированного PIN
+        self.pin_display_field = ft.TextField(
+            label="Ваш PIN-код для будущих входов",
+            read_only=True,
+            width=350,
+            text_style=ft.TextStyle(size=20, weight=ft.FontWeight.BOLD),
+        )
+
+        # Кнопки
+        self.login_button = ft.ElevatedButton(
+            text="Войти",
+            on_click=self.handle_login,
+            width=150,
+            height=40
+        )
+        self.reset_button = ft.ElevatedButton(
+            text="Сбросить ключ",
+            on_click=self.toggle_reset_mode,
+            width=150,
+            height=40,
+            visible=self.auth_data_exists
+        )
+
+    def get_content_controls(self):
+        """
+        Получение списка элементов управления в зависимости от текущего режима.
+
+        Returns:
+            list: Список элементов управления для отображения
+        """
+        controls = []
+
+        if self.pin_generated:
+            # PIN сгенерирован и отображен
+            controls.extend([
+                self.pin_display_field,
+                self.info_text,
+                ft.Row([
+                    ft.ElevatedButton(
+                        "OK",
+                        on_click=self.close_container,
+                        width=150,
+                        height=40
+                    )
+                ], alignment=ft.MainAxisAlignment.CENTER)
+            ])
+        elif self.is_first_login or self.reset_mode:
+            # Режим первого входа или сброса: показываем поле API ключа
+            controls.extend([
+                self.api_key_field,
+                self.info_text,
+                ft.Row([
+                    self.login_button,
+                    self.reset_button
+                ], alignment=ft.MainAxisAlignment.CENTER)
+            ])
+        else:
+            # Режим повторного входа: показываем поле PIN
+            controls.extend([
+                self.pin_field,
+                self.info_text,
+                ft.Row([
+                    self.login_button,
+                    self.reset_button
+                ], alignment=ft.MainAxisAlignment.CENTER)
+            ])
+
+        return controls
+
+    def update_content(self):
+        """
+        Обновление содержимого контейнера после изменения режима.
+        """
+        # Обновление списка элементов управления
+        self.content.controls = self.get_content_controls()
+        # Сброс информационного текста
+        self.info_text.value = ""
+
+    def toggle_reset_mode(self, e):
+        """
+        Переключение в режим сброса API ключа.
+
+        Args:
+            e: Событие нажатия кнопки
+        """
+        self.reset_mode = not self.reset_mode
+        self.pin_generated = False  # Сброс флага PIN
+        self.update_content()
+        if self.page:
+            self.page.update()
+
+    def close_container(self, e):
+        """
+        Закрытие контейнера (вызывается после показа PIN).
+        """
+        if self.on_success:
+            self.on_success()
+
+    def handle_login(self, e):
+        """
+        Обработка попытки входа в систему.
+
+        Args:
+            e: Событие нажатия кнопки входа
+        """
+        try:
+            if self.is_first_login or self.reset_mode:
+                # Обработка первого входа или сброса ключа
+                self.handle_first_login()
+            else:
+                # Обработка повторного входа с PIN
+                self.handle_pin_login()
+        except Exception as ex:
+            # Обработка ошибок входа
+            self.info_text.value = f"Ошибка: {str(ex)}"
+            self.info_text.color = ft.colors.RED_400
+
+    def handle_first_login(self):
+        """
+        Обработка первого входа системы (ввод API ключа).
+        """
+        api_key = self.api_key_field.value
+
+        if not api_key:
+            self.info_text.value = "Введите API ключ"
+            self.info_text.color = ft.colors.RED_400
+            return
+
+        # Валидация API ключа через баланс
+        if not self.validate_api_key(api_key):
+            self.info_text.value = "Неверный API ключ или недостаточно кредитов"
+            self.info_text.color = ft.colors.RED_400
+            return
+
+        # Генерация PIN-кода на основе API ключа
+        pin = self.cache.generate_pin(api_key)
+
+        # Сохранение данных аутентификации
+        self.cache.save_auth_data(api_key, pin)
+
+        # Отображение PIN в специальном поле
+        self.pin_display_field.value = pin
+        self.pin_generated = True
+
+        # Информационное сообщение
+        self.info_text.value = "PIN успешно создан и сохранен! Используйте его для будущих входов."
+        self.info_text.color = ft.colors.GREEN_400
+
+        # Обновление интерфейса
+        self.update_content()
+        if self.page:
+            self.page.update()
+
+    def handle_pin_login(self):
+        """
+        Обработка входа с использованием PIN-кода.
+        """
+        entered_pin = self.pin_field.value
+
+        if not entered_pin or len(entered_pin) != 4:
+            self.info_text.value = "Введите 4-значный PIN"
+            self.info_text.color = ft.colors.RED_400
+            return
+
+        # Проверка PIN
+        if not self.cache.verify_pin(entered_pin):
+            self.info_text.value = "Неверный PIN"
+            self.info_text.color = ft.colors.RED_400
+            return
+
+        # Успешный вход
+        self.info_text.value = "Вход выполнен успешно!"
+        self.info_text.color = ft.colors.GREEN_400
+
+        # Вызов колбэка успешного входа
+        if self.on_success:
+            self.on_success()
+
+    def validate_api_key(self, api_key):
+        """
+        Валидация API ключа через проверку баланса.
+
+        Args:
+            api_key (str): API ключ для валидации
+
+        Returns:
+            bool: True если ключ валиден и баланс положительный
+        """
+        try:
+            # Создание временного экземпляра API клиента с введенным ключом
+            temp_client = self.api_client_class(api_key=api_key)
+            balance = temp_client.get_balance()
+
+            # Проверка, что баланс положительный (не ошибка и содержит $)
+            return balance != "Ошибка" and "$" in balance
+        except Exception:
+            return False

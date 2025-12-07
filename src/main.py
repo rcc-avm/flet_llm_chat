@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))      # Добавление дир
 import flet as ft                                  # Фреймворк для создания кроссплатформенных приложений с современным UI
 from api.openrouter import OpenRouterClient        # Клиент для взаимодействия с AI API через OpenRouter
 from ui.styles import AppStyles                    # Модуль с настройками стилей интерфейса
-from ui.components import MessageBubble, ModelSelector, LoginWindow  # Компоненты пользовательского интерфейса
+from ui.components import MessageBubble, ModelSelector, LoginWindow, LoginContainer  # Компоненты пользовательского интерфейса
 from utils.cache import ChatCache                  # Модуль для кэширования истории чата
 from utils.logger import AppLogger                 # Модуль для логирования работы приложения
 from utils.analytics import Analytics              # Модуль для сбора и анализа статистики использования
@@ -60,10 +60,10 @@ class ChatApp:
 
         # Создание компонента для отображения баланса API
         self.balance_text = ft.Text(
-            "Баланс: Загрузка...",                # Начальный текст до загрузки реального баланса
+            "Баланс: н/д",                         # Начальный текст до загрузки реального баланса
             **AppStyles.BALANCE_TEXT               # Применение стилей из конфигурации
         )
-        self.update_balance()                      # Первичное обновление баланса
+        self.update_balance()                      # Первичное обновление баланса (временно отключено)
 
     def load_chat_history(self):
         """
@@ -110,6 +110,24 @@ class ChatApp:
         """
         Отображение основного интерфейса приложения после успешной аутентификации.
         """
+        # Очистка страницы перед добавлением нового UI
+        page.controls.clear()
+
+        # Простое тестовое UI без сложных компонентов
+        #test_text = ft.Text("Главный интерфейс загружен!", size=24, color=ft.Colors.GREEN_400)
+        #test_button = ft.ElevatedButton("Тест", on_click=lambda e: page.update())
+
+        #simple_column = ft.Column(
+        #    controls=[test_text, test_button],
+        #    alignment=ft.MainAxisAlignment.CENTER,
+        #    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        #)
+
+        #page.add(simple_column)
+        #page.update()
+
+        #return  # Прерываем выполнение, возвращаем простое UI для тестирования
+
         # Применение базовых настроек страницы из конфигурации стилей
         for key, value in AppStyles.PAGE_SETTINGS.items():
             setattr(page, key, value)
@@ -440,48 +458,60 @@ class ChatApp:
 
         # Добавление основной колонки на страницу
         page.add(self.main_column)
-        
+
+        # Финальное обновление страницы для рендеринга всех компонентов
+        page.update()
+
         # Запуск монитора
         self.monitor.get_metrics()
-        
+
         # Логирование запуска
         self.logger.info("Приложение запущено")
 
     def show_login_window(self, page: ft.Page):
         """
-        Отображение окна входа в систему.
+        Отображение окна входа в систему используя обычный контейнер вместо модального диалога.
         """
-        # Создание окна входа
-        login_window = LoginWindow(self.cache, OpenRouterClient)
+        # Создание обычного контейнера вместо модального диалога для лучшей совместимости
+        login_container = ft.Container(
+            content=ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text("Вход в систему", size=20, weight=ft.FontWeight.BOLD),
+                        ft.Divider(),
+                        # Элементы входа будут добавлены при создании логин компонента
+                        ft.Text("Загрузка...", size=16)
+                    ], spacing=20),
+                    padding=30,
+                    width=450,
+                    height=350
+                )
+            ),
+            alignment=ft.alignment.center,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900,
+        )
 
-        # Установка страницы для окна входа
-        login_window.page = page
-
-        # Показ диалога
-        page.overlay.append(login_window)
-        login_window.open = True
-        page.update()
+        # Создание постоянного компонента входа
+        login_component = LoginContainer(self.cache, OpenRouterClient)
 
         # Настройка обработчика успешного входа
-        original_close = login_window.close_after_delay
-
-        async def handle_login_success(delay_seconds):
-            # Ждем указанное время (показ сообщений пользователю)
-            await asyncio.sleep(delay_seconds)
-
+        def on_login_success():
+            """Обработчик успешного входа"""
             # Инициализация после аутентификации
             self.initialize_after_auth()
 
-            # Скрытие окна входа
-            login_window.open = False
-            if login_window in page.overlay:
-                page.overlay.remove(login_window)
-
-            # Показ основного интерфейса
+            # Переход к основному интерфейсу
+            page.controls.clear()
             self.show_main_ui(page)
 
-        # Переопределение метода закрытия
-        login_window.close_after_delay = handle_login_success
+        login_component.on_success = on_login_success
+        login_container.content.content.content.controls[2] = login_component
+        login_component.page = page
+
+        # Добавление на страницу
+        page.add(login_container)
+        page.update()
 
     def main(self, page: ft.Page):
         """
@@ -494,8 +524,8 @@ def main():
     """Точка входа в приложение"""
     app = ChatApp()                              # Создание экземпляра приложения
     # Запуск приложения
-    #ft.app(target=app.main, view=ft.AppView.WEB_BROWSER)
     ft.app(target=app.main)
+    #ft.app(target=app.main, view=ft.WEB_BROWSER)
 
 
 if __name__ == "__main__":
