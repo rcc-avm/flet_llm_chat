@@ -105,23 +105,24 @@ class OpenRouterClient:
     def send_message(self, message: str, model: str):
         """
         Отправка сообщения выбранной языковой модели.
-        
+
         Args:
             message (str): Текст сообщения для отправки
             model (str): Идентификатор выбранной модели
-            
+
         Returns:
             dict: Ответ от API, содержащий либо ответ модели, либо информацию об ошибке
         """
         # Логирование отправки сообщения
         self.logger.debug(f"Sending message to model: {model}")
-        
+        self.logger.debug(f"Using API key: {self.api_key[:10]}...")
+
         # Формирование данных для отправки в API
         data = {
             "model": model,  # Идентификатор выбранной модели
             "messages": [{"role": "user", "content": message}]  # Сообщение в формате API
         }
-        
+
         try:
             # Логирование начала выполнения запроса
             self.logger.debug("Making API request")
@@ -132,13 +133,13 @@ class OpenRouterClient:
                 headers=self.headers,                 # Заголовки с авторизацией
                 json=data                            # Данные запроса
             )
-            
+
             # Проверка на ошибки HTTP
             response.raise_for_status()
-            
+
             # Логирование успешного получения ответа
             self.logger.info("Successfully received response from API")
-            
+
             # Возврат данных ответа
             return response.json()
 
@@ -148,12 +149,12 @@ class OpenRouterClient:
             # Логирование ошибки с полным стектрейсом для отладки
             self.logger.error(error_msg, exc_info=True)
             # Возврат сообщения об ошибке в формате ответа API
-            return {"error": str(e)}       
+            return {"error": str(e)}
 
     def get_balance(self):
         """
         Получение текущего баланса аккаунта.
-        
+
         Returns:
             str: Строка с балансом в формате '$X.XX' или 'Ошибка' при неудаче
         """
@@ -163,12 +164,16 @@ class OpenRouterClient:
                 f"{self.base_url}/credits",  # Эндпоинт для проверки баланса
                 headers=self.headers         # Заголовки с авторизацией
             )
+            response.raise_for_status()  # Проверка на ошибки HTTP
             # Получение данных из ответа
             data = response.json()
-            if data:
-                data = data.get('data')
+            if data and data.get('data') is not None:
+                balance_data = data.get('data')
                 # Вычисление доступного баланса (всего кредитов минус использовано)
-                return f"${(data.get('total_credits', 0)-data.get('total_usage', 0)):.2f}"
+                total_credits = balance_data.get('total_credits', 0)
+                total_usage = balance_data.get('total_usage', 0)
+                balance = max(0, total_credits - total_usage)  # Убедимся, что баланс не отрицательный
+                return f"${balance:.2f}"
             return "Ошибка"
         except Exception as e:
             # Формирование сообщения об ошибке

@@ -54,6 +54,9 @@ class ChatApp:
         if not auth_data:
             raise ValueError("Нет аутентификационных данных")
 
+        # Логирование используемого ключа (для отладки - скрываем значение)
+        self.logger.debug(f"Initializing with API key: {auth_data['api_key'][:10]}...")
+
         # Инициализация API клиента с сохраненным ключом
         self.api_client = OpenRouterClient(api_key=auth_data['api_key'])
         self.analytics = Analytics(self.cache)     # Инициализация системы аналитики
@@ -97,14 +100,18 @@ class ChatApp:
         при ошибке - красным с текстом 'н/д' (не доступен).
         """
         try:
+            # Логирование попытки получения баланса
+            self.logger.info("Запрос баланса через API")
             balance = self.api_client.get_balance()         # Запрос баланса через API
+            self.logger.info(f"Баланс получен: {balance}")
+
             self.balance_text.value = f"Баланс: {balance}"  # Обновление текста с балансом
             self.balance_text.color = ft.Colors.GREEN_400   # Установка зеленого цвета для успешного получения
         except Exception as e:
             # Обработка ошибки получения баланса
+            self.logger.error(f"Ошибка обновления баланса: {e}")
             self.balance_text.value = "Баланс: н/д"         # Установка текста ошибки
             self.balance_text.color = ft.Colors.RED_400     # Установка красного цвета для ошибки
-            self.logger.error(f"Ошибка обновления баланса: {e}")
             
     def show_main_ui(self, page: ft.Page):
         """

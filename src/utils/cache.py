@@ -5,11 +5,6 @@ from datetime import datetime  # Библиотека для работы с д�
 import threading   # Библиотека для обеспечения потокобезопасности
 import hashlib     # Библиотека для хэширования данных
 import secrets     # Библиотека для генерации безопасных случайных чисел
-from cryptography.fernet import Fernet  # Для симметричного шифрования
-import base64      # Для кодирования ключа шифрования
-
-# Фиксированный ключ для шифрования API ключа (для локального хранения)
-_ENCRYPTION_KEY = Fernet(b'MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=')
 
 class ChatCache:
     """
@@ -102,8 +97,8 @@ class ChatCache:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS auth_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                encrypted_api_key TEXT NOT NULL,  -- Зашифрованный API ключ
-                pin TEXT NOT NULL,                -- PIN-код (хэшированный)
+                api_key TEXT NOT NULL,             -- API ключ в открытом виде
+                pin TEXT NOT NULL,                 -- PIN-код (хэшированный)
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -202,20 +197,17 @@ class ChatCache:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Шифрование API ключа
-        encrypted_key = _ENCRYPTION_KEY.encrypt(api_key.encode()).decode()
-
         # Хэширование PIN
         hashed_pin = hashlib.sha256(pin.encode()).hexdigest()
 
         # Очистка старых данных перед сохранением новых
         cursor.execute('DELETE FROM auth_data')
 
-        # Сохранение новых данных
+        # Сохранение новых данных (API ключ в открытом виде)
         cursor.execute('''
-            INSERT INTO auth_data (encrypted_api_key, pin)
+            INSERT INTO auth_data (api_key, pin)
             VALUES (?, ?)
-        ''', (encrypted_key, hashed_pin))
+        ''', (api_key, hashed_pin))
         conn.commit()
 
     def get_auth_data(self):
@@ -228,20 +220,14 @@ class ChatCache:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT encrypted_api_key, pin FROM auth_data ORDER BY id DESC LIMIT 1')
+        cursor.execute('SELECT api_key, pin FROM auth_data ORDER BY id DESC LIMIT 1')
         row = cursor.fetchone()
 
         if row:
-            try:
-                # Расшифровка API ключа
-                api_key = _ENCRYPTION_KEY.decrypt(row[0].encode()).decode()
-                return {
-                    'api_key': api_key,
-                    'pin': row[1]
-                }
-            except Exception:
-                # Если не удалось расшифровать, возвращаем None
-                return None
+            return {
+                'api_key': row[0],
+                'pin': row[1]
+            }
         return None
 
     def verify_pin(self, entered_pin):

@@ -386,14 +386,14 @@ class LoginWindow(ft.AlertDialog):
             api_key (str): API ключ для валидации
 
         Returns:
-            bool: True если ключ валиден и баланс положительный
+            bool: True если ключ валиден и баланс получен
         """
         try:
             # Создание временного экземпляра API клиента с введенным ключом
             temp_client = self.api_client_class(api_key=api_key)
             balance = temp_client.get_balance()
 
-            # Проверка, что баланс положительный (не ошибка и содержит $)
+            # Проверка, что баланс получен успешно (не ошибка и содержит $)
             return balance != "Ошибка" and "$" in balance
         except Exception:
             return False
@@ -606,24 +606,32 @@ class LoginContainer(ft.Container):
             self.info_text.color = ft.colors.RED_400
             return
 
-        # Валидация API ключа через баланс
+        # Валидация API ключа через проверку моделей
         if not self.validate_api_key(api_key):
-            self.info_text.value = "Неверный API ключ или недостаточно кредитов"
+            self.info_text.value = f"Неверный API ключ"
             self.info_text.color = ft.colors.RED_400
             return
 
         # Генерация PIN-кода на основе API ключа
         pin = self.cache.generate_pin(api_key)
+        print(f"DEBUG: Generated PIN: {pin} for key: {api_key[:10]}...")
 
         # Сохранение данных аутентификации
         self.cache.save_auth_data(api_key, pin)
+
+        # Проверяем что сохранилось
+        saved_data = self.cache.get_auth_data()
+        if saved_data:
+            print(f"DEBUG: Saved API key: {saved_data['api_key'][:10]}..., PIN hash: {saved_data['pin'][:10]}...")
+        else:
+            print("DEBUG: Failed to save auth data!")
 
         # Отображение PIN в специальном поле
         self.pin_display_field.value = pin
         self.pin_generated = True
 
         # Информационное сообщение
-        self.info_text.value = "PIN успешно создан и сохранен! Используйте его для будущих входов."
+        self.info_text.value = f"PIN успешно создан: {pin}. Ключ сохранен."
         self.info_text.color = ft.colors.GREEN_400
 
         # Обновление интерфейса
@@ -658,20 +666,73 @@ class LoginContainer(ft.Container):
 
     def validate_api_key(self, api_key):
         """
-        Валидация API ключа через проверку баланса.
+        Комплексная валидация API ключа через проверку моделей, баланса и тестового запроса.
 
         Args:
             api_key (str): API ключ для валидации
 
         Returns:
-            bool: True если ключ валиден и баланс положительный
+            bool: True если ключ валиден по всем критериям
         """
         try:
+            import logging
+            logger = logging.getLogger(__name__)
+
+            print(f"=== ВАЛИДАЦИЯ API КЛЮЧА: {api_key[:10]}... ===")
+            logger.info(f"Проверка API ключа: {api_key[:10]}...")
+
             # Создание временного экземпляра API клиента с введенным ключом
             temp_client = self.api_client_class(api_key=api_key)
-            balance = temp_client.get_balance()
+            all_checks_passed = True
 
-            # Проверка, что баланс положительный (не ошибка и содержит $)
-            return balance != "Ошибка" and "$" in balance
-        except Exception:
+            # 1. Получение списка моделей
+            print(f"Запрос моделей с ключом: {api_key[:10]}...")
+            logger.info(f"Запрос моделей с ключом: {api_key[:10]}...")
+            try:
+                models = temp_client.get_models()
+                print(f"✓ Модели получены: {len(models)} моделей")
+                logger.info(f"✓ Модели получены: {len(models)} моделей")
+                models_ok = len(models) > 0
+            except Exception as e:
+                print(f"✗ Ошибка получения моделей: {e}")
+                logger.error(f"✗ Ошибка получения моделей: {e}")
+                models_ok = False
+                all_checks_passed = False
+
+            # 2. Получение баланса
+            print(f"Запрос баланса с ключом: {api_key[:10]}...")
+            logger.info(f"Запрос баланса с ключом: {api_key[:10]}...")
+            try:
+                balance = temp_client.get_balance()
+                print(f"✓ Баланс получен: {balance}")
+                logger.info(f"✓ Баланс получен: {balance}")
+                balance_ok = balance != "Ошибка"
+            except Exception as e:
+                print(f"✗ Ошибка получения баланса: {e}")
+                logger.error(f"✗ Ошибка получения баланса: {e}")
+                balance_ok = False
+                all_checks_passed = False
+
+            # 3. Тестовый текстовый запрос
+            print(f"Тестовый запрос '2+2=' с ключом: {api_key[:10]}...")
+            logger.info(f"Тестовый запрос с ключом: {api_key[:10]}...")
+            try:
+                test_response = temp_client.send_message("2+2=", "deepseek-coder")
+                print(f"✓ Тестовый ответ: {test_response}")
+                logger.info(f"✓ Тестовый ответ получен")
+                test_ok = True
+            except Exception as e:
+                print(f"✗ Ошибка тестового запроса: {e}")
+                logger.error(f"✗ Ошибка тестового запроса: {e}")
+                test_ok = False
+                all_checks_passed = False
+
+            print(f"=== РЕЗУЛЬТАТ ВАЛИДАЦИИ: {'✓ ПРОЙДЕНА' if all_checks_passed else '✗ НЕ ПРОЙДЕНА'} ===")
+            logger.info(f"Валидация API ключа {'пройдена' if all_checks_passed else 'не пройдена'}")
+
+            return all_checks_passed
+
+        except Exception as e:
+            print(f"✗ Критическая ошибка валидации: {e}")
+            logging.getLogger(__name__).error(f"Критическая ошибка валидации: {e}")
             return False
